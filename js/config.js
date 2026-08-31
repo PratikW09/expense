@@ -4,7 +4,7 @@
  * Consolidates exact required scopes at initial login.
  */
 const CONFIG = {
-  CLIENT_ID: localStorage.getItem('g_client_id') || '',
+  CLIENT_ID: '264456296680-kagklpicnp77fb32j89kc6uh1djassv6.apps.googleusercontent.com',
   
   SPREADSHEET_NAME: 'ExpenseSplit Tracker',
   EXPENSES_TAB: 'Expenses',
