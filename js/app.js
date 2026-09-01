@@ -1,11 +1,11 @@
 /**
  * app.js
  * Expense & Split Tracker — Modern Fintech UX
+ * - OAuth Authorization Code Flow with Long-Lived Refresh Tokens
  * - Edit & Delete for Personal Expenses & Split Requests
  * - Idempotency & Duplicate Prevention (crypto.randomUUID assigned at creation)
  * - Sub-item batch integrity & check-before-write on sync retries
  * - 3 Smart Split Modes: Equal, Paid for Them (100%), Custom Amounts
- * - Silent Token Renewal & Scope Recovery
  */
 
 const App = (() => {
@@ -21,7 +21,7 @@ const App = (() => {
   let searchQuery = '';
   let isSaving = false;
   let syncQueuePaused = false;
-  let editingExpenseId = null; // null | string
+  let editingExpenseId = null;
   let els = {};
 
   /**
@@ -36,23 +36,23 @@ const App = (() => {
     return prefix ? `${prefix}_${time}_${rand}` : `${time}_${rand}`;
   }
 
-  function init() {
+  async function init() {
     cacheDom();
     bindEvents();
-    checkAuthState();
     renderFriendChips();
     renderExpenses();
     renderFriendsBalances();
     setDefaultDate();
 
-    // Register Scope Upgrade listener
+    // Register Scope Upgrade and Token Revocation listeners
     GoogleSheets.onScopeUpgradeRequired(handleScopeUpgradeRequired);
+    GoogleSheets.onTokenRevoked(handleTokenRevoked);
 
-    // Initial background flush of pending items on load
-    if (GoogleSheets.isConnected()) {
-      syncAllPendingData();
-      syncFromGoogle();
-    }
+    // Handle OAuth Redirect URL parameters
+    await handleUrlAuthParams();
+
+    // Initial auth & data synchronization
+    await checkInitialSession();
   }
 
   function cacheDom() {
@@ -115,56 +115,23 @@ const App = (() => {
   }
 
   function bindEvents() {
-    // 1. Sign In
+    // 1. Sign In (Authorization Code redirect)
     els.googleSignInBtn?.addEventListener('click', () => {
-      showStatus('Connecting to Google...', 'info');
-      GoogleSheets.signIn(
-        async () => {
-          showStatus('Connected! Verifying Google Sheet...', 'info');
-          try {
-            await GoogleSheets.getOrCreateSpreadsheet();
-            checkAuthState();
-            showStatus('Connected to your Google Sheet! ✅', 'success');
-            if (els.scopeUpgradeBanner) els.scopeUpgradeBanner.style.display = 'none';
-            syncQueuePaused = false;
-            await syncAllPendingData();
-            await syncFromGoogle();
-          } catch (e) {
-            checkAuthState();
-            if (e.isInsufficientScope) {
-              handleScopeUpgradeRequired(e);
-            } else {
-              showStatus(`Connected with Google. (${e.message})`, 'warning');
-            }
-          }
-        },
-        (err) => {
-          showStatus(`Sign-in cancelled: ${err}`, 'error');
-        }
-      );
+      showStatus('Redirecting to Google Sign-In...', 'info');
+      GoogleSheets.signIn();
     });
 
-    // 2. Interactive Scope Upgrade Reconnect
-    els.reconnectGoogleBtn?.addEventListener('click', async () => {
-      try {
-        showStatus('Updating permissions with Google...', 'info');
-        await GoogleSheets.requestScopeConsent();
-        if (els.scopeUpgradeBanner) els.scopeUpgradeBanner.style.display = 'none';
-        syncQueuePaused = false;
-        showStatus('Google permissions updated! Syncing data... ✅', 'success');
-        await syncAllPendingData();
-        await syncFromGoogle();
-      } catch (err) {
-        console.error('Scope reconnect error:', err);
-        showStatus(`Re-authorization failed: ${err.message}`, 'error');
-      }
+    // 2. Interactive Scope Upgrade / Reconnect
+    els.reconnectGoogleBtn?.addEventListener('click', () => {
+      GoogleSheets.requestScopeConsent();
     });
 
     // 3. Sign Out
-    els.signOutBtn?.addEventListener('click', () => {
-      GoogleSheets.signOut();
-      checkAuthState();
-      showStatus('Signed out from Google.', 'info');
+    els.signOutBtn?.addEventListener('click', async () => {
+      showStatus('Signing out...', 'info');
+      await GoogleSheets.signOut();
+      updateAuthUI(false);
+      showStatus('Signed out successfully.', 'info');
     });
 
     // 4. Tab Switching
@@ -213,11 +180,95 @@ const App = (() => {
     els.expenseForm?.addEventListener('submit', handleAddOrUpdateExpense);
   }
 
+  /**
+   * Handle OAuth Return Query Params (/?auth=success or /?auth_error=...)
+   */
+  async function handleUrlAuthParams() {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.has('auth')) {
+      // Clean up URL query parameters without reloading
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showStatus('Google Account connected! Syncing data... ✅', 'success');
+    }
+
+    if (params.has('auth_error')) {
+      const err = params.get('auth_error');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showStatus(`Sign-in was not completed: ${err}`, 'error');
+    }
+  }
+
+  /**
+   * Check initial session status with the backend on page load
+   */
+  async function checkInitialSession() {
+    try {
+      await GoogleSheets.requestAccessToken();
+      updateAuthUI(true);
+      await GoogleSheets.getOrCreateSpreadsheet();
+      syncQueuePaused = false;
+      await syncAllPendingData();
+      await syncFromGoogle();
+    } catch (err) {
+      if (err.isTokenRevoked || err.code === 'UNAUTHORIZED' || err.code === 'TOKEN_REQUIRED') {
+        updateAuthUI(false);
+      } else if (err.isInsufficientScope) {
+        updateAuthUI(true);
+        handleScopeUpgradeRequired(err);
+      } else {
+        // Offline or transient network issue — stay in cached app mode if we have local cache
+        const hasCachedData = expenses.length > 0 || splits.length > 0;
+        updateAuthUI(hasCachedData);
+        if (!hasCachedData) {
+          showStatus(`Could not reach backend: ${err.message}`, 'warning');
+        }
+      }
+    }
+  }
+
   function handleScopeUpgradeRequired(err) {
     console.warn('Scope upgrade required:', err);
     syncQueuePaused = true;
     if (els.scopeUpgradeBanner) {
       els.scopeUpgradeBanner.style.display = 'flex';
+    }
+  }
+
+  function handleTokenRevoked(err) {
+    console.warn('Token revoked / re-auth required:', err);
+    syncQueuePaused = true;
+    updateAuthUI(false);
+    showStatus('Your session expired or Google permission was revoked. Please sign in again.', 'warning');
+  }
+
+  function updateAuthUI(connected) {
+    const profile = GoogleSheets.getUserProfile();
+    const sheetUrl = GoogleSheets.getSpreadsheetUrl();
+
+    if (connected) {
+      if (els.signinScreen) els.signinScreen.style.display = 'none';
+      if (els.appScreen) els.appScreen.style.display = 'flex';
+
+      if (profile) {
+        if (els.userName) els.userName.textContent = profile.given_name || profile.name || 'Friend';
+        if (els.userAvatar) {
+          if (profile.picture) {
+            els.userAvatar.src = profile.picture;
+            els.userAvatar.style.display = 'block';
+          } else {
+            els.userAvatar.style.display = 'none';
+          }
+        }
+      }
+
+      if (sheetUrl && els.sheetLink) {
+        els.sheetLink.href = sheetUrl;
+      }
+      setTimeout(() => els.amountInput?.focus(), 100);
+    } else {
+      if (els.signinScreen) els.signinScreen.style.display = 'block';
+      if (els.appScreen) els.appScreen.style.display = 'none';
     }
   }
 
@@ -252,38 +303,6 @@ const App = (() => {
       els.viewAdd.style.display = 'none';
       els.viewFriends.style.display = 'block';
       renderFriendsBalances();
-    }
-  }
-
-  function checkAuthState() {
-    const connected = GoogleSheets.isConnected();
-    const profile = GoogleSheets.getUserProfile();
-    const sheetUrl = GoogleSheets.getSpreadsheetUrl();
-
-    if (connected) {
-      if (els.signinScreen) els.signinScreen.style.display = 'none';
-      if (els.appScreen) els.appScreen.style.display = 'flex';
-
-      if (profile) {
-        if (els.userName) els.userName.textContent = profile.given_name || profile.name || 'Friend';
-        if (els.userAvatar) {
-          if (profile.picture) {
-            els.userAvatar.src = profile.picture;
-            els.userAvatar.style.display = 'block';
-          } else {
-            els.userAvatar.style.display = 'none';
-          }
-        }
-      }
-
-      if (sheetUrl && els.sheetLink) {
-        els.sheetLink.href = sheetUrl;
-      }
-
-      setTimeout(() => els.amountInput?.focus(), 100);
-    } else {
-      if (els.signinScreen) els.signinScreen.style.display = 'block';
-      if (els.appScreen) els.appScreen.style.display = 'none';
     }
   }
 
@@ -495,6 +514,10 @@ const App = (() => {
           handleScopeUpgradeRequired(err);
           return;
         }
+        if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
+          return;
+        }
       }
     }
 
@@ -510,6 +533,10 @@ const App = (() => {
         console.error('Error syncing split rows:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+          return;
+        }
+        if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
           return;
         }
       }
@@ -549,7 +576,6 @@ const App = (() => {
     let friendsTotalShare = 0;
     const newSplitRows = [];
 
-    // Is this an update to an existing expense?
     const isEditing = !!editingExpenseId;
     const expenseId = isEditing ? editingExpenseId : generateUUID('exp');
     const existingExpense = isEditing ? expenses.find((x) => x.id === expenseId) : null;
@@ -563,7 +589,6 @@ const App = (() => {
         friendsTotalShare = Math.round((perPersonShare * splitFriendsList.length) * 100) / 100;
 
         splitFriendsList.forEach((person) => {
-          // Check if we had an existing split row for this person in this expense
           const prevSplit = isEditing ? splits.find((s) => s.expenseId === expenseId && s.personName === person) : null;
           newSplitRows.push({
             id: prevSplit ? prevSplit.id : generateUUID('spl'),
@@ -641,10 +666,9 @@ const App = (() => {
     els.submitBtn.disabled = true;
     els.submitBtn.innerHTML = isEditing ? 'Updating...' : 'Saving...';
 
-    // 1. Update local cache immediately
+    // 1. Update local cache immediately (0ms)
     if (isEditing) {
       expenses = expenses.map((e) => (e.id === expenseId ? expenseObj : e));
-      // Remove old splits for this expense and replace with new ones
       splits = splits.filter((s) => s.expenseId !== expenseId);
       if (newSplitRows.length > 0) {
         splits = [...newSplitRows, ...splits];
@@ -672,7 +696,6 @@ const App = (() => {
           expenseObj.syncedToGoogle = true;
           saveExpensesCache();
 
-          // Sync splits
           if (newSplitRows.length > 0) {
             await GoogleSheets.appendSplitRows(newSplitRows, true);
             newSplitRows.forEach((s) => (s.syncedToGoogle = true));
@@ -694,6 +717,8 @@ const App = (() => {
         console.error('Google Sheet save/update error:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+        } else if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
         } else {
           showStatus(`Saved locally. Will sync to Sheet automatically.`, 'info');
         }
@@ -715,12 +740,10 @@ const App = (() => {
     editingExpenseId = id;
     switchTab('add');
 
-    // Fill form fields
     els.amountInput.value = exp.amount;
     els.actualDateInput.value = exp.actualDate;
     els.noteInput.value = exp.note;
 
-    // Restore friends split if any
     selectedFriends.clear();
     customAmounts = {};
 
@@ -731,11 +754,9 @@ const App = (() => {
         customAmounts[s.personName] = Number(s.shareAmount);
       });
 
-      // Determine split mode
       if (exp.myShare === 0) {
         splitMode = 'full';
       } else {
-        // Check if equal
         const totalPeople = matchingSplits.length + 1;
         const equalShare = Math.round((exp.amount / totalPeople) * 100) / 100;
         const isAllEqual = matchingSplits.every((s) => Math.abs(s.shareAmount - equalShare) < 0.05);
@@ -758,7 +779,6 @@ const App = (() => {
     }
     updateSplitPreview();
 
-    // Show Edit Indicator
     if (els.editModeIndicator) els.editModeIndicator.style.display = 'flex';
     if (els.submitBtn) els.submitBtn.innerHTML = 'Update Expense';
 
@@ -792,7 +812,6 @@ const App = (() => {
 
     showStatus(`Deleting "${exp.note}"...`, 'info');
 
-    // 1. Remove from local caches immediately (0ms)
     expenses = expenses.filter((e) => e.id !== id);
     splits = splits.filter((s) => s.expenseId !== id);
     saveExpensesCache();
@@ -801,12 +820,10 @@ const App = (() => {
     renderExpenses();
     renderFriendsBalances();
 
-    // If we were editing this item, cancel edit
     if (editingExpenseId === id) {
       cancelEdit();
     }
 
-    // 2. Delete from Google Sheets
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
         await GoogleSheets.deleteExpenseAndSplits(id);
@@ -815,6 +832,8 @@ const App = (() => {
         console.error('Delete expense error:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+        } else if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
         } else {
           showStatus(`Deleted locally. (Sheet warning: ${err.message})`, 'warning');
         }
@@ -834,12 +853,10 @@ const App = (() => {
 
     showStatus(`Deleting split item for ${split.personName}...`, 'info');
 
-    // 1. Remove from local state immediately
     splits = splits.filter((s) => s.id !== splitId);
     saveSplitsCache();
     renderFriendsBalances();
 
-    // 2. Delete from Google Sheet
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
         await GoogleSheets.deleteSingleSplit(splitId);
@@ -848,6 +865,8 @@ const App = (() => {
         console.error('Delete split error:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+        } else if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
         } else {
           showStatus(`Deleted locally. (Sheet warning: ${err.message})`, 'warning');
         }
@@ -857,7 +876,7 @@ const App = (() => {
     }
   }
 
-  /* ─── Friends & Balances View (Filter + Accordion + Settle + Delete) ─── */
+  /* ─── Friends & Balances View ────────────────────────────── */
   function renderFriendsBalances() {
     if (!els.friendsBalancesList) return;
 
@@ -1008,7 +1027,7 @@ const App = (() => {
       })
       .join('');
 
-    // Bind Individual Item Settle Buttons
+    // Bind Settle and Delete buttons
     els.friendsBalancesList.querySelectorAll('.btn-item-settle').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1020,7 +1039,6 @@ const App = (() => {
       });
     });
 
-    // Bind Individual Item Delete Buttons
     els.friendsBalancesList.querySelectorAll('.btn-item-delete').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1029,7 +1047,6 @@ const App = (() => {
       });
     });
 
-    // Bind Settle All Buttons
     els.friendsBalancesList.querySelectorAll('.btn-settle-all').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1044,7 +1061,6 @@ const App = (() => {
     const today = new Date().toISOString().split('T')[0];
     showStatus(`Settling ${CONFIG.CURRENCY}${amount} for "${note}" with ${personName}...`, 'info');
 
-    // 1. Update local state
     splits = splits.map((s) => {
       if (s.id === splitId) {
         return { ...s, isPaid: true, paidDate: today };
@@ -1054,7 +1070,6 @@ const App = (() => {
     saveSplitsCache();
     renderFriendsBalances();
 
-    // 2. Update Google Sheet
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
         await GoogleSheets.markSingleSplitAsPaid(splitId, today);
@@ -1063,6 +1078,8 @@ const App = (() => {
         console.error('Single item settle sync error:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+        } else if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
         } else {
           showStatus(`Settled locally. (Sheet sync: ${err.message})`, 'warning');
         }
@@ -1077,7 +1094,6 @@ const App = (() => {
     const today = new Date().toISOString().split('T')[0];
     showStatus(`Settling all dues for ${personName}...`, 'info');
 
-    // 1. Update local state
     splits = splits.map((s) => {
       if (s.personName.toLowerCase() === personName.toLowerCase() && !s.isPaid) {
         return { ...s, isPaid: true, paidDate: today };
@@ -1087,7 +1103,6 @@ const App = (() => {
     saveSplitsCache();
     renderFriendsBalances();
 
-    // 2. Update Google Sheet
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
         await GoogleSheets.settlePersonSplits(personName, today);
@@ -1096,6 +1111,8 @@ const App = (() => {
         console.error('Settle all sync error:', err);
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+        } else if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
         } else {
           showStatus(`Marked settled locally. (Sheet sync: ${err.message})`, 'warning');
         }
@@ -1109,7 +1126,6 @@ const App = (() => {
   async function syncAllPendingData() {
     if (syncQueuePaused || !GoogleSheets.isConnected()) return;
 
-    // 1. Sync un-synced expenses with check-before-write
     const unsyncedExpenses = expenses.filter((e) => !e.syncedToGoogle);
     for (const exp of unsyncedExpenses) {
       try {
@@ -1120,12 +1136,15 @@ const App = (() => {
           handleScopeUpgradeRequired(err);
           return;
         }
+        if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
+          return;
+        }
         console.warn('Expense retry sync warning:', exp.id, err);
       }
     }
     saveExpensesCache();
 
-    // 2. Sync un-synced splits with check-before-write
     const unsyncedSplits = splits.filter((s) => !s.syncedToGoogle);
     if (unsyncedSplits.length > 0) {
       try {
@@ -1137,6 +1156,10 @@ const App = (() => {
       } catch (err) {
         if (err.isInsufficientScope) {
           handleScopeUpgradeRequired(err);
+          return;
+        }
+        if (err.isTokenRevoked) {
+          handleTokenRevoked(err);
           return;
         }
         console.warn('Splits retry sync warning:', err);
@@ -1170,7 +1193,6 @@ const App = (() => {
           syncedToGoogle: true,
         }));
 
-        // Merge keeping local unsynced items if any
         const expMap = new Map();
         expenses.filter((e) => !e.syncedToGoogle).forEach((e) => expMap.set(e.id, e));
         mappedExp.forEach((e) => expMap.set(e.id, e));
@@ -1203,6 +1225,8 @@ const App = (() => {
     } catch (e) {
       if (e.isInsufficientScope) {
         handleScopeUpgradeRequired(e);
+      } else if (e.isTokenRevoked) {
+        handleTokenRevoked(e);
       } else {
         console.warn('Could not auto-sync:', e);
       }
@@ -1272,7 +1296,6 @@ const App = (() => {
       )
       .join('');
 
-    // Bind Edit buttons
     els.expensesList.querySelectorAll('.btn-row-edit').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1281,7 +1304,6 @@ const App = (() => {
       });
     });
 
-    // Bind Delete buttons
     els.expensesList.querySelectorAll('.btn-row-delete').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();

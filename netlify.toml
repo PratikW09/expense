@@ -1,0 +1,26 @@
+# Netlify Configuration for Expense & Split Tracker SPA + OAuth Backend
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# API & Auth Endpoints Routing
+[[redirects]]
+  from = "/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
+  from = "/auth/callback"
+  to = "/.netlify/functions/auth-callback"
+  status = 200
+
+[[redirects]]
+  from = "/api/get-access-token"
+  to = "/.netlify/functions/get-access-token"
+  status = 200
+
+[[redirects]]
+  from = "/api/logout"
+  to = "/.netlify/functions/logout"
+  status = 200

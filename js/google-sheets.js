@@ -1,16 +1,14 @@
 /**
  * google-sheets.js
- * Google Identity Services (OAuth2) & Google Sheets API v4
- * - Scope Consolidation: https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets
- * - Silent token renewal on expiry via GIS requestAccessToken({ prompt: '' })
- * - Single wrapped sheetsFetch for all Google API calls with automatic 401 retry
- * - Genuine 403 scope error detection and interactive consent recovery
- * - Idempotent check-before-write functions for Expenses & Splits
- * - Row Edit & Delete support (deleteDimension & values.update)
+ * Google Sheets API v4 Integration with Serverless OAuth Authorization Code & Refresh Tokens
+ * - Backend token refresh endpoint: /api/get-access-token
+ * - Eliminates frequent re-logins using long-lived encrypted refresh tokens
+ * - Direct client-to-Google Sheets API v4 calls via wrapped sheetsFetch
+ * - Distinct TOKEN_REVOKED error handling and sync queue protection
+ * - Idempotent check-before-write, batch integrity, edit, and delete support
  */
 
 const GoogleSheets = (() => {
-  let tokenClient = null;
   let accessToken = sessionStorage.getItem('g_access_token') || null;
   let tokenExpiresAt = parseInt(sessionStorage.getItem('g_token_expires_at') || '0', 10);
   let spreadsheetId = localStorage.getItem('g_spreadsheet_id') || null;
@@ -19,19 +17,10 @@ const GoogleSheets = (() => {
 
   let activeTokenPromise = null;
   let scopeUpgradeHandler = null;
-
-  function getClientId() {
-    return localStorage.getItem('g_client_id') || CONFIG.CLIENT_ID || '';
-  }
-
-  function setClientId(id) {
-    id = (id || '').trim();
-    localStorage.setItem('g_client_id', id);
-    CONFIG.CLIENT_ID = id;
-  }
+  let tokenRevocationHandler = null;
 
   function isConnected() {
-    return !!accessToken;
+    return !!(accessToken || sessionStorage.getItem('g_access_token'));
   }
 
   function getUserProfile() {
@@ -50,95 +39,96 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Initialize or retrieve GIS Token Client with consolidated scopes
+   * Register listener for revoked/invalid refresh tokens (Task 2 & 5)
    */
-  function ensureTokenClient(callback) {
-    const clientId = getClientId();
-    if (!clientId) {
-      throw new Error('Google OAuth Client ID is missing.');
-    }
-
-    if (!window.google?.accounts?.oauth2) {
-      throw new Error('Google Identity Services library is not loaded.');
-    }
-
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: CONFIG.SCOPES,
-      callback: callback || (() => {}),
-    });
-
-    return tokenClient;
+  function onTokenRevoked(handler) {
+    tokenRevocationHandler = handler;
   }
 
   /**
-   * Request Access Token via GIS
-   * @param {string} promptMode - '' for silent renewal, 'consent' for interactive login/consent
-   * @returns {Promise<string>} new access token
+   * Task 2 & Task 5: Request or Refresh Access Token via backend /api/get-access-token
+   * @param {boolean} force - Force an immediate backend refresh
+   * @returns {Promise<string>} access token
    */
-  function requestAccessTokenPromise(promptMode = '') {
+  function requestAccessTokenPromise(force = false) {
     if (activeTokenPromise) {
       return activeTokenPromise;
     }
 
-    activeTokenPromise = new Promise((resolve, reject) => {
-      const handleTokenCallback = async (resp) => {
-        if (resp.error) {
-          const err = new Error(resp.error_description || resp.error);
-          err.oauthError = resp.error;
-          reject(err);
-          return;
+    activeTokenPromise = (async () => {
+      try {
+        const res = await fetch('/api/get-access-token', {
+          method: 'GET',
+          headers: {
+            'Cache-Control': 'no-cache',
+          },
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const isRevoked = data.error === 'TOKEN_REVOKED' || data.error === 'TOKEN_REQUIRED';
+          const err = new Error(data.message || 'Failed to authenticate with backend.');
+          err.code = data.error || 'AUTH_FAILED';
+          err.isTokenRevoked = isRevoked;
+          err.statusCode = res.status;
+
+          if (isRevoked) {
+            accessToken = null;
+            sessionStorage.removeItem('g_access_token');
+            sessionStorage.removeItem('g_token_expires_at');
+            if (typeof tokenRevocationHandler === 'function') {
+              tokenRevocationHandler(err);
+            }
+          }
+          throw err;
         }
 
-        accessToken = resp.access_token;
-        const expiresInSec = parseInt(resp.expires_in, 10) || 3600;
+        accessToken = data.accessToken;
+        const expiresInSec = parseInt(data.expiresIn, 10) || 3600;
         tokenExpiresAt = Date.now() + (expiresInSec * 1000);
 
         sessionStorage.setItem('g_access_token', accessToken);
         sessionStorage.setItem('g_token_expires_at', tokenExpiresAt.toString());
 
-        resolve(accessToken);
-      };
+        if (data.userProfile) {
+          userProfile = data.userProfile;
+          sessionStorage.setItem('g_user_profile', JSON.stringify(data.userProfile));
+        }
 
-      try {
-        const client = ensureTokenClient(handleTokenCallback);
-        client.requestAccessToken({ prompt: promptMode });
-      } catch (err) {
-        reject(err);
+        return accessToken;
+      } finally {
+        activeTokenPromise = null;
       }
-    }).finally(() => {
-      activeTokenPromise = null;
-    });
+    })();
 
     return activeTokenPromise;
   }
 
   /**
-   * Ensure a valid, non-expired access token is available.
+   * Ensure a valid, non-expired access token is available before each Sheets call.
    */
-  async function getValidToken(interactive = false) {
+  async function getValidToken() {
     const now = Date.now();
     const hasValidCachedToken = accessToken && tokenExpiresAt && (tokenExpiresAt - now > 60000);
 
-    if (!interactive && hasValidCachedToken) {
+    if (hasValidCachedToken) {
       return accessToken;
     }
 
-    return await requestAccessTokenPromise(interactive ? 'consent' : '');
+    return await requestAccessTokenPromise();
   }
 
   /**
-   * Single wrapped Sheets/Google API fetch function
+   * Single wrapped Sheets/Google API fetch function with 401 retry-once (Task 5)
    */
   async function sheetsFetch(url, options = {}, isRetry = false) {
     let token;
     try {
-      token = await getValidToken(false);
+      token = await getValidToken();
     } catch (tokenErr) {
-      if (tokenErr.oauthError === 'interaction_required' || tokenErr.oauthError === 'consent_required') {
-        const err = new Error('Session expired. Please reconnect your account.');
-        err.requiresConsent = true;
-        throw err;
+      if (tokenErr.isTokenRevoked) {
+        throw tokenErr;
       }
       throw tokenErr;
     }
@@ -155,17 +145,15 @@ const GoogleSheets = (() => {
       return await res.json();
     }
 
-    // Case A: 401 Unauthorized (Silent renewal retry)
+    // Case A: 401 Unauthorized (Silent refresh retry via backend)
     if (res.status === 401 && !isRetry) {
-      console.warn('Google API returned 401. Silently renewing token and retrying...');
+      console.warn('Sheets API returned 401. Refreshing token via backend and retrying...');
       try {
-        await requestAccessTokenPromise('');
+        await requestAccessTokenPromise(true);
         return await sheetsFetch(url, options, true);
       } catch (retryTokenErr) {
-        console.error('Silent token renewal failed after 401:', retryTokenErr);
-        const err = new Error('Session expired. Please sign in again.');
-        err.requiresConsent = true;
-        throw err;
+        console.error('Token refresh failed after 401:', retryTokenErr);
+        throw retryTokenErr;
       }
     }
 
@@ -199,63 +187,33 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Interactive Sign-In / First Consent
+   * Task 4: Initiate Login via Google Authorization Code flow with offline refresh token
    */
-  async function signIn(onSuccess, onError) {
-    let clientId = getClientId();
+  function signIn() {
+    window.location.href = '/auth/login';
+  }
 
-    if (!clientId) {
-      clientId = prompt('Please enter your Google OAuth Web Client ID:');
-      if (!clientId) {
-        if (onError) onError('Google Client ID is required to sign in.');
-        return;
-      }
-      setClientId(clientId);
-    }
-
+  /**
+   * Task 3: Logout endpoint call
+   */
+  async function signOut() {
     try {
-      await requestAccessTokenPromise('consent');
-
-      try {
-        const profile = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        }).then(r => r.ok ? r.json() : null).catch(() => null);
-
-        if (profile) {
-          userProfile = profile;
-          sessionStorage.setItem('g_user_profile', JSON.stringify(profile));
-        }
-      } catch (e) {
-        console.warn('Profile fetch skipped:', e);
-      }
-
-      await getOrCreateSpreadsheet();
-      if (onSuccess) onSuccess();
-    } catch (err) {
-      console.error('Sign in error:', err);
-      if (onError) onError(err.message || String(err));
+      await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+    } finally {
+      accessToken = null;
+      tokenExpiresAt = 0;
+      userProfile = null;
+      sessionStorage.removeItem('g_access_token');
+      sessionStorage.removeItem('g_token_expires_at');
+      sessionStorage.removeItem('g_user_profile');
     }
   }
 
   /**
-   * Explicit Interactive Consent for Scope Upgrade
+   * Request scope upgrade / re-consent
    */
-  async function requestScopeConsent() {
-    await requestAccessTokenPromise('consent');
-    await ensureTabsExist(spreadsheetId).catch(console.warn);
-    return accessToken;
-  }
-
-  function signOut() {
-    if (accessToken && window.google?.accounts?.oauth2) {
-      google.accounts.oauth2.revoke(accessToken, () => {});
-    }
-    accessToken = null;
-    tokenExpiresAt = 0;
-    userProfile = null;
-    sessionStorage.removeItem('g_access_token');
-    sessionStorage.removeItem('g_token_expires_at');
-    sessionStorage.removeItem('g_user_profile');
+  function requestScopeConsent() {
+    window.location.href = '/auth/login';
   }
 
   /**
@@ -326,7 +284,7 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Find or create spreadsheet
+   * Find or create spreadsheet in user's Google Drive
    */
   async function getOrCreateSpreadsheet() {
     if (spreadsheetId) {
@@ -335,7 +293,7 @@ const GoogleSheets = (() => {
         await ensureTabsExist(spreadsheetId);
         return { spreadsheetId: sheet.spreadsheetId, url: getSpreadsheetUrl() };
       } catch (e) {
-        if (e.isInsufficientScope) throw e;
+        if (e.isInsufficientScope || e.isTokenRevoked) throw e;
         spreadsheetId = null;
         localStorage.removeItem('g_spreadsheet_id');
       }
@@ -356,7 +314,7 @@ const GoogleSheets = (() => {
         return { spreadsheetId, url: spreadsheetUrl };
       }
     } catch (e) {
-      if (e.isInsufficientScope) throw e;
+      if (e.isInsufficientScope || e.isTokenRevoked) throw e;
       console.warn('Drive search fallback:', e);
     }
 
@@ -382,7 +340,7 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Lightweight read of Column A (IDs) to check if an item is already recorded
+   * Lightweight read of Column A (IDs) to check if an item is already recorded (Idempotency)
    */
   async function fetchExistingIds(tabName) {
     if (!spreadsheetId) await getOrCreateSpreadsheet();
@@ -399,7 +357,7 @@ const GoogleSheets = (() => {
       });
       return idSet;
     } catch (err) {
-      if (err.isInsufficientScope) throw err;
+      if (err.isInsufficientScope || err.isTokenRevoked) throw err;
       console.warn(`fetchExistingIds warning for ${tabName}:`, err);
       return new Set();
     }
@@ -509,7 +467,7 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Fetch all master expenses (with row indices for edit/delete)
+   * Fetch all master expenses
    */
   async function fetchExpenses() {
     if (!spreadsheetId) await getOrCreateSpreadsheet();
@@ -531,14 +489,14 @@ const GoogleSheets = (() => {
         splitWith: r[7] || '',
       }));
     } catch (e) {
-      if (e.isInsufficientScope) throw e;
+      if (e.isInsufficientScope || e.isTokenRevoked) throw e;
       console.warn('fetchExpenses warning:', e);
       return [];
     }
   }
 
   /**
-   * Fetch all splits (with row indices for edit/delete/settle)
+   * Fetch all splits
    */
   async function fetchSplits() {
     if (!spreadsheetId) await getOrCreateSpreadsheet();
@@ -564,7 +522,7 @@ const GoogleSheets = (() => {
         };
       });
     } catch (e) {
-      if (e.isInsufficientScope) throw e;
+      if (e.isInsufficientScope || e.isTokenRevoked) throw e;
       console.warn('fetchSplits warning:', e);
       return [];
     }
@@ -606,7 +564,6 @@ const GoogleSheets = (() => {
   async function deleteExpenseAndSplits(expenseId) {
     if (!spreadsheetId) await getOrCreateSpreadsheet();
 
-    // 1. Delete matching split rows first (in reverse row order so indices don't shift)
     const allSplits = await fetchSplits();
     const targetSplits = allSplits
       .filter((s) => s.expenseId === expenseId)
@@ -631,7 +588,6 @@ const GoogleSheets = (() => {
       }).catch(console.warn);
     }
 
-    // 2. Delete the master expense row
     const allExpenses = await fetchExpenses();
     const targetExpense = allExpenses.find((e) => e.id === expenseId);
     const expensesSheetId = await getSheetIdByName(CONFIG.EXPENSES_TAB);
@@ -738,8 +694,6 @@ const GoogleSheets = (() => {
   }
 
   return {
-    getClientId,
-    setClientId,
     signIn,
     signOut,
     isConnected,
@@ -758,7 +712,9 @@ const GoogleSheets = (() => {
     markSingleSplitAsPaid,
     settlePersonSplits,
     sheetsFetch,
+    requestAccessToken: requestAccessTokenPromise,
     onScopeUpgradeRequired,
+    onTokenRevoked,
     requestScopeConsent,
   };
 })();

@@ -1,16 +1,51 @@
-# Daily Expense & Friend Split Tracker (Google Sheets Backed)
+# Daily Expense & Friend Split Tracker
 
-## 📌 Features & Complete Lifecycle Management
+A modern, high-performance web app for daily personal expense tracking and splitting bills with friends, backed directly by Google Sheets with long-lived session persistence.
 
-A modern, fast web app with:
+---
+
+## 📌 Features & Architecture
+
+- **OAuth 2.0 Authorization Code Flow + Long-Lived Refresh Tokens**:
+  - Eliminates frequent re-logins using a minimal serverless backend (`/auth/login`, `/auth/callback`, `/api/get-access-token`, `/api/logout`).
+  - Google refresh tokens are encrypted at rest with AES-256-GCM and kept secure in `HttpOnly` session cookies.
+  - Client secret never touches the browser.
+- **Direct Google Sheets API v4 Integration**:
+  - The frontend communicates directly with Google Sheets API v4 using fresh access tokens supplied by the backend.
+  - Automatic silent refresh before token expiry with 401 retry-once.
 - **Edit & Delete Actions**:
-  - **Edit Expense**: 1-click `✏️` loads any previous expense back into the form with an interactive "Editing Expense" mode, updating the master row and replacing/updating split entries in both local cache and Google Sheets.
-  - **Delete Expense**: 1-click `🗑️` removes the expense and all corresponding friend split items with prompt confirmation, deleting the rows from Google Sheets via `deleteDimension`.
-  - **Delete Split Request**: 1-click `🗑️` on individual friend split items under "Who Owes Me" removes erroneous or cancelled split requests.
-- **Idempotency-Key Duplicate Prevention**: Assigns permanent IDs via `crypto.randomUUID()` at the moment of local creation, reused across retries.
-- **Check-Before-Write Read**: Performs lightweight Column A reads (`values.get` on `${tab}!A2:A`) before appending retried items to prevent duplicate rows across network drops or multi-device syncs.
-- **Sub-Item Batch Integrity**: Tracks sync status per sub-item (`expense.syncedToGoogle` and `split.syncedToGoogle`), allowing retries to sync only genuinely missing rows.
-- **Consolidated OAuth Scopes**: `https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets`
-- **Silent Token Renewal on Expiry**: Automatic, transparent refresh via Google Identity Services (`requestAccessToken({ prompt: '' })`) without user interruption.
-- **Distinct Scope Upgrade Handling (403)**: Automatically detects genuine permission upgrades and offers 1-click interactive re-authorization.
-- **3 Smart Split Modes**: Equal Split, Paid for Them (100%), and Custom Amounts with auto-sum.
+  - Edit any past expense with instant formula recalculation and Google Sheets update.
+  - Delete master expenses or individual friend split line items.
+- **Idempotency-Key Duplicate Prevention**:
+  - Generates permanent UUIDs at creation time via `crypto.randomUUID()`.
+  - Performs check-before-write reads on sync retries to prevent duplicates across network drops and timeouts.
+- **3 Smart Split Modes**:
+  - Equal Split (You + Friends).
+  - Paid for Them (100%).
+  - Custom Amounts with dynamic balance auto-sum.
+
+---
+
+## ⚙️ Environment Variables (Netlify)
+
+Add the following environment variables in **Netlify Site Configuration > Environment Variables**:
+
+| Variable | Description |
+| :--- | :--- |
+| `GOOGLE_CLIENT_ID` | Your Google OAuth 2.0 Web Client ID |
+| `GOOGLE_CLIENT_SECRET` | Your Google OAuth 2.0 Client Secret |
+| `ENCRYPTION_SECRET` | 32+ character random string for AES-256-GCM token encryption |
+| `APP_URL` | *(Optional)* Your production URL (e.g. `https://serene-frangipane-551005.netlify.app`) |
+
+---
+
+## 🌐 Google Cloud Console Setup
+
+In [Google Cloud Console Credentials](https://console.cloud.google.com/apis/credentials):
+
+1. Under **Authorized JavaScript origins**, add:
+   - `https://serene-frangipane-551005.netlify.app`
+   - `http://localhost:8888` (for local development)
+2. Under **Authorized redirect URIs**, add:
+   - `https://serene-frangipane-551005.netlify.app/auth/callback`
+   - `http://localhost:8888/auth/callback` (for local development)
