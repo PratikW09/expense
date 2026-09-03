@@ -25,3 +25,4 @@ alter table public.users enable row level security;
 -- Service role has full access
 create policy "Allow service role full access" on public.users
   for all using (true);
+

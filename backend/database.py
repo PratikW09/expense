@@ -237,3 +237,4 @@ class Database:
 
 # Global database instance
 db = Database()
+

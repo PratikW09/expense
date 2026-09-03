@@ -2,11 +2,24 @@
 ARCHITECTURE_DISCUSSION.md
 *architecture*.md
 
-# Local environment & system files
-.DS_Store
-Thumbs.db
+# Local environment & secrets
 .env
 .env.local
+.env.*
+backend/.env
+*.env
+
+# SQLite local databases
+*.db
+backend/*.db
+
+# Python cache & artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# System files & dependencies
+.DS_Store
+Thumbs.db
 node_modules/
 *.log
-

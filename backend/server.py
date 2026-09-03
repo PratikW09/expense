@@ -316,3 +316,4 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     print(f"Starting Expense Tracker Backend on http://localhost:{port}")
     uvicorn.run("server:app", host=host, port=port, reload=True)
+
