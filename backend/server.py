@@ -46,7 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "264456296680-kagklpicnp77fb32j89kc6uh1djassv6.apps.googleusercontent.com").strip()
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "264456296680-7j2iu4c26sf4req03ms0hliecu78fn4g.apps.googleusercontent.com").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 
 SCOPES = " ".join([

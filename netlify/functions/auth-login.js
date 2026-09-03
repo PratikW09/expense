@@ -16,7 +16,7 @@ const SCOPES = [
 ].join(' ');
 
 exports.handler = async (event) => {
-  const clientId = process.env.GOOGLE_CLIENT_ID || '264456296680-kagklpicnp77fb32j89kc6uh1djassv6.apps.googleusercontent.com';
+  const clientId = process.env.GOOGLE_CLIENT_ID || '264456296680-7j2iu4c26sf4req03ms0hliecu78fn4g.apps.googleusercontent.com';
   
   if (!clientId) {
     return {
