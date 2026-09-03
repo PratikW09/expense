@@ -57,8 +57,10 @@ const GoogleSheets = (() => {
 
     activeTokenPromise = (async () => {
       try {
-        const res = await fetch('/api/get-access-token', {
+        const baseUrl = (CONFIG.API_BASE_URL || '').replace(/\/$/, '');
+        const res = await fetch(`${baseUrl}/api/get-access-token`, {
           method: 'GET',
+          credentials: 'include',
           headers: {
             'Cache-Control': 'no-cache',
           },
@@ -190,7 +192,8 @@ const GoogleSheets = (() => {
    * Task 4: Initiate Login via Google Authorization Code flow with offline refresh token
    */
   function signIn() {
-    window.location.href = '/auth/login';
+    const baseUrl = (CONFIG.API_BASE_URL || '').replace(/\/$/, '');
+    window.location.href = `${baseUrl}/auth/login`;
   }
 
   /**
@@ -198,7 +201,8 @@ const GoogleSheets = (() => {
    */
   async function signOut() {
     try {
-      await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+      const baseUrl = (CONFIG.API_BASE_URL || '').replace(/\/$/, '');
+      await fetch(`${baseUrl}/api/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
     } finally {
       accessToken = null;
       tokenExpiresAt = 0;
@@ -213,7 +217,8 @@ const GoogleSheets = (() => {
    * Request scope upgrade / re-consent
    */
   function requestScopeConsent() {
-    window.location.href = '/auth/login';
+    const baseUrl = (CONFIG.API_BASE_URL || '').replace(/\/$/, '');
+    window.location.href = `${baseUrl}/auth/login`;
   }
 
   /**

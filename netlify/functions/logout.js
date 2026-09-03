@@ -27,3 +27,4 @@ exports.handler = async (event) => {
     body: JSON.stringify({ success: true, message: 'Logged out successfully.' }),
   };
 };
+
