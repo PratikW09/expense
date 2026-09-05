@@ -3,19 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Expense & Split Tracker</title>
+  <title>Expense & Split Tracker | खर्च आणि हिशोब</title>
   
+  <!-- PWA Manifest & Meta Tags -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Expense" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192' fill='%234f46e5'><rect width='192' height='192' rx='36' fill='%234f46e5'/><rect x='36' y='52' width='120' height='88' rx='16' fill='none' stroke='white' stroke-width='12'/><line x1='36' y1='84' x2='156' y2='84' stroke='white' stroke-width='12'/><circle cx='68' cy='112' r='8' fill='white'/></svg>" />
+
   <!-- Modern Clean Favicon (SVG) -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='4' width='20' height='16' rx='2'/><line x1='2' y1='10' x2='22' y2='10'/></svg>" />
   
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Styles -->
   <link rel="stylesheet" href="css/styles.css" />
-  
+
+  <!-- Chart.js CDN for Analytics Dashboard -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -32,8 +42,8 @@
         </svg>
       </div>
       
-      <h1>Expense & Split Tracker</h1>
-      <p class="signin-desc">Track daily personal expenses and split bills with friends. All data syncs directly and securely with your Google Sheet.</p>
+      <h1 id="signin-title">Expense & Split Tracker</h1>
+      <p id="signin-desc" class="signin-desc">Track daily personal expenses and split bills with friends. All data syncs directly and securely with your Google Sheet.</p>
       
       <button id="google-signin-btn" class="btn-google-large">
         <svg width="18" height="18" viewBox="0 0 24 24">
@@ -42,7 +52,7 @@
           <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.94 0 12s.45 3.84 1.25 5.42l4.03-3.15z"/>
           <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
         </svg>
-        Continue with Google
+        <span id="signin-btn-text">Continue with Google</span>
       </button>
 
       <div class="signin-privacy">
@@ -50,7 +60,7 @@
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
         </svg>
-        <span>Private & isolated: only accesses this app's spreadsheet.</span>
+        <span id="signin-privacy-text">Private & isolated: only accesses this app's spreadsheet.</span>
       </div>
     </div>
 
@@ -65,13 +75,34 @@
         <div class="user-info">
           <img id="user-avatar" class="user-avatar" alt="Avatar" src="" style="display:none;" />
           <div>
-            <div class="greeting">Hi, <strong id="user-name">Friend</strong></div>
+            <div class="greeting"><span id="lbl-greeting">Hi</span>, <strong id="user-name">Friend</strong></div>
             <div class="sheet-status">
-              <span class="status-dot"></span> Google Sheet connected
+              <span class="status-dot"></span> <span id="lbl-sheet-connected">Sheet connected</span>
             </div>
           </div>
         </div>
+        
         <div class="header-actions">
+          
+          <!-- Language Selector Dropdown (English & Marathi) -->
+          <div class="lang-selector-wrap">
+            <select id="language-select" class="language-select" title="Change Language / भाषा निवडा">
+              <option value="en">English</option>
+              <option value="mr">मराठी</option>
+            </select>
+          </div>
+
+          <!-- Add Mobile Shortcut / Install App Button -->
+          <button id="install-app-btn" class="btn-install-app" title="Add App to Mobile Home Screen">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+              <line x1="12" y1="18" x2="12.01" y2="18"/>
+              <polyline points="8 10 12 14 16 10"/>
+              <line x1="12" y1="6" x2="12" y2="14"/>
+            </svg>
+            <span id="lbl-install-btn">App Shortcut</span>
+          </button>
+
           <a id="sheet-link" class="btn-sheet" href="#" target="_blank" rel="noopener noreferrer">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -80,9 +111,10 @@
               <line x1="16" y1="17" x2="8" y2="17"/>
               <polyline points="10 9 9 9 8 9"/>
             </svg>
-            Open Sheet
+            <span id="lbl-sheet-btn">Sheet</span>
           </a>
-          <button id="signout-btn" class="btn-icon" title="Sign out">
+          
+          <button id="signout-btn" class="btn-icon" title="Sign out / बाहेर पडा">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
               <polyline points="16 17 21 12 16 7"/>
@@ -92,27 +124,35 @@
         </div>
       </header>
 
-      <!-- Navigation Tabs -->
+      <!-- Navigation Tabs (3 Tabs) -->
       <nav class="tab-nav">
         <button id="tab-add" class="tab-btn active" data-tab="add">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          Add Expense
+          <span id="tab-lbl-add">पैसे गेले (खर्च)</span>
         </button>
         <button id="tab-friends" class="tab-btn" data-tab="friends">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
             <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
             <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
           </svg>
-          Who Owes Me <span id="pending-badge" class="badge-count" style="display:none;">0</span>
+          <span id="tab-lbl-friends">पैसे येणे बाकी</span> <span id="pending-badge" class="badge-count" style="display:none;">0</span>
+        </button>
+        <button id="tab-dashboard" class="tab-btn" data-tab="dashboard">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+          <span id="tab-lbl-dashboard">हिशोब</span>
         </button>
       </nav>
 
-      <!-- Distinct Scope Permission Upgrade Banner (Task 3) -->
+      <!-- Distinct Scope Permission Upgrade Banner -->
       <div id="scope-upgrade-banner" class="scope-upgrade-banner" style="display: none;">
         <div class="scope-banner-content">
           <svg class="scope-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -121,8 +161,8 @@
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <div class="scope-text-wrap">
-            <div class="scope-title">One-Time Permission Update</div>
-            <div class="scope-desc">We added a new feature and need one more permission — please reconnect your Google account.</div>
+            <div class="scope-title" id="scope-banner-title">One-Time Permission Update</div>
+            <div class="scope-desc" id="scope-banner-desc">We added a new feature and need one more permission — please reconnect your Google account.</div>
           </div>
         </div>
         <button type="button" id="reconnect-google-btn" class="btn-reconnect">
@@ -144,7 +184,7 @@
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
-              <span>Editing Expense</span>
+              <span id="lbl-editing-expense">Editing Expense</span>
             </div>
             <button type="button" id="cancel-edit-btn" class="btn-cancel-edit">Cancel</button>
           </div>
@@ -185,7 +225,7 @@
             <!-- Split with Friends Section -->
             <div class="split-section">
               <div class="split-label-row">
-                <span class="split-title">Split with Friends</span>
+                <span class="split-title" id="lbl-split-title">मित्रांसोबत वाटा (Split with Friends)</span>
                 <span id="split-clear-btn" class="split-clear" style="display:none;">Clear split</span>
               </div>
               
@@ -196,13 +236,13 @@
               <div id="split-mode-container" class="split-mode-row" style="display:none;">
                 <div class="split-toggle-group">
                   <button type="button" id="split-mode-equal" class="split-toggle-btn active" title="Split equally among You + Friends">
-                    Equal Split
+                    <span id="lbl-mode-equal">समान वाटा (Equal)</span>
                   </button>
                   <button type="button" id="split-mode-full" class="split-toggle-btn" title="I paid for them completely (My share = 0)">
-                    Paid for Them (100%)
+                    <span id="lbl-mode-full">मी भरले १००% (Them)</span>
                   </button>
                   <button type="button" id="split-mode-custom" class="split-toggle-btn" title="Specify custom amount for each person">
-                    Custom Amounts
+                    <span id="lbl-mode-custom">कस्टम रक्कम (Custom)</span>
                   </button>
                 </div>
               </div>
@@ -216,7 +256,7 @@
 
             <!-- Save / Update Button -->
             <button type="submit" id="submit-btn" class="btn-submit">
-              Save Expense
+              <span id="lbl-submit-btn">खर्च जतन करा (Save Expense)</span>
             </button>
           </form>
         </div>
@@ -229,7 +269,7 @@
                 <path d="M12 8v4l3 3"/>
                 <circle cx="12" cy="12" r="10"/>
               </svg>
-              Recent Expenses
+              <span id="lbl-recent-expenses">अलीकडील खर्च (Recent Expenses)</span>
             </span>
             <span id="total-amount" class="total-pill">₹ 0.00</span>
           </summary>
@@ -243,7 +283,10 @@
           
           <!-- Summary Bar -->
           <div class="friends-summary-bar">
-            <span class="fs-label">Total You Are Owed</span>
+            <div>
+              <div class="fs-label" id="lbl-total-owed-title">एकूण पैसे येणे बाकी (Money to Receive)</div>
+              <div class="fs-subtitle" id="lbl-total-owed-desc">मित्रांकडून येणे असलेले एकूण पैसे</div>
+            </div>
             <span id="total-owed-amount" class="fs-val">₹ 0.00</span>
           </div>
 
@@ -257,7 +300,7 @@
               <input 
                 type="text" 
                 id="friends-search-input" 
-                placeholder="Filter by friend name..." 
+                placeholder="नावानुसार शोधा (Filter by name)..." 
                 autocomplete="off"
               />
               <button type="button" id="clear-search-btn" class="btn-clear-search" style="display:none;">✕</button>
@@ -276,13 +319,152 @@
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
               <polyline points="22 4 12 14.01 9 11.01"/>
             </svg>
-            <p>All settled up! No pending dues.</p>
+            <p id="lbl-empty-friends">सर्व हिशोब चुकता झाला आहे! कोणाकडूनही पैसे येणे बाकी नाही.</p>
           </div>
+        </div>
+      </div>
+
+      <!-- ─── TAB 3: DASHBOARD & ANALYTICS CHARTS ─── -->
+      <div id="view-dashboard" class="tab-view" style="display: none;">
+        <div class="dashboard-container">
+          
+          <!-- Filter Controls Bar -->
+          <div class="dashboard-toolbar">
+            <div class="toolbar-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="20" x2="18" y2="10"/>
+                <line x1="12" y1="20" x2="12" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="14"/>
+              </svg>
+              <span id="lbl-analytics-title">हिशोब व विश्लेषण (Analytics)</span>
+            </div>
+            <div class="toolbar-controls">
+              <select id="analytics-year-select" class="analytics-select"></select>
+              <select id="analytics-month-select" class="analytics-select">
+                <option value="all">सर्व महिने (All)</option>
+                <option value="01">जानेवारी (Jan)</option>
+                <option value="02">फेब्रुवारी (Feb)</option>
+                <option value="03">मार्च (Mar)</option>
+                <option value="04">एप्रिल (Apr)</option>
+                <option value="05">मे (May)</option>
+                <option value="06">जून (Jun)</option>
+                <option value="07">जुलै (Jul)</option>
+                <option value="08">ऑगस्ट (Aug)</option>
+                <option value="09">सप्टेंबर (Sep)</option>
+                <option value="10">ऑक्टोबर (Oct)</option>
+                <option value="11">नोव्हेंबर (Nov)</option>
+                <option value="12">डिसेंबर (Dec)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- KPI Summary Cards Grid -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-label" id="kpi-period-label">हा महिना (This Month)</span>
+              <span class="kpi-value" id="kpi-month-spend">₹ 0.00</span>
+              <span class="kpi-sub" id="kpi-month-sub">एकूण झालेला खर्च</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label" id="kpi-year-label">निवडलेले वर्ष (Year)</span>
+              <span class="kpi-value" id="kpi-year-spend">₹ 0.00</span>
+              <span class="kpi-sub" id="kpi-year-sub">वार्षिक एकूण खर्च</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label" id="lbl-kpi-my-share">माझा स्वतःचा खर्च (My Share)</span>
+              <span class="kpi-value kpi-highlight" id="kpi-my-share">₹ 0.00</span>
+              <span class="kpi-sub" id="kpi-share-sub">मित्रांचा वाटा वगळून</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label" id="lbl-kpi-daily-avg">दररोजचा सरासरी खर्च (Daily Avg)</span>
+              <span class="kpi-value" id="kpi-daily-avg">₹ 0.00</span>
+              <span class="kpi-sub" id="kpi-daily-sub">सरासरी प्रमाण</span>
+            </div>
+          </div>
+
+          <!-- Chart 1: Monthly Spend Trend -->
+          <div class="card chart-card">
+            <div class="chart-header">
+              <span class="chart-title" id="lbl-chart-monthly-title">महिन्यानुसार खर्चाचा आलेख (Monthly Trend)</span>
+              <span class="chart-badge" id="trend-year-badge">2026</span>
+            </div>
+            <div class="chart-canvas-wrap">
+              <canvas id="monthly-trend-chart"></canvas>
+            </div>
+          </div>
+
+          <!-- Charts Row: Share Distribution & Top Categories -->
+          <div class="dashboard-grid-row">
+            
+            <!-- Doughnut Chart: My Share vs Friends' Share -->
+            <div class="card chart-card-half">
+              <div class="chart-header">
+                <span class="chart-title" id="lbl-chart-dist-title">खर्चाची विभागणी (Distribution)</span>
+              </div>
+              <div class="chart-canvas-wrap doughnut-wrap">
+                <canvas id="share-doughnut-chart"></canvas>
+              </div>
+            </div>
+
+            <!-- Top Spending Categories -->
+            <div class="card chart-card-half">
+              <div class="chart-header">
+                <span class="chart-title" id="lbl-chart-cat-title">सर्वाधिक खर्च कशावर झाला?</span>
+              </div>
+              <div id="category-breakdown-list" class="category-breakdown-list"></div>
+            </div>
+          </div>
+
+          <!-- Chart 3: Day-by-Day Breakdown for Active Month -->
+          <div class="card chart-card" id="daily-chart-card">
+            <div class="chart-header">
+              <span class="chart-title" id="daily-chart-title">दररोजचा खर्च (Daily Breakdown)</span>
+            </div>
+            <div class="chart-canvas-wrap">
+              <canvas id="daily-month-chart"></canvas>
+            </div>
+          </div>
+
         </div>
       </div>
 
     </div>
 
+  </div>
+
+  <!-- Mobile Shortcut / Install Guide Modal -->
+  <div id="install-modal" class="install-modal-backdrop" style="display: none;">
+    <div class="install-modal-card">
+      <div class="install-modal-header">
+        <div class="install-modal-icon">📱</div>
+        <div class="install-modal-title" id="lbl-modal-title">अ‍ॅप शॉर्टकट तयार करा (Install App)</div>
+        <button type="button" id="close-install-modal" class="btn-close-modal">✕</button>
+      </div>
+      
+      <p class="install-modal-text" id="lbl-modal-desc">हे अ‍ॅप तुमच्या मोबाईल होम स्क्रीनवर १-क्लिक मध्ये अ‍ॅपसारखे उघडण्यासाठी शॉर्टकट जोडा.</p>
+
+      <div class="install-steps">
+        <div class="install-step-item">
+          <strong>📱 Android (Chrome / Brave):</strong>
+          <ol>
+            <li>वर उजवीकडील <strong>तीन ठिपके ( ⋮ )</strong> वर टॅप करा.</li>
+            <li><strong>"Add to Home screen"</strong> किंवा <strong>"Install app"</strong> वर टॅप करा.</li>
+            <li><strong>Install</strong> बटण दाबा.</li>
+          </ol>
+        </div>
+
+        <div class="install-step-item">
+          <strong>🍎 iPhone / iPad (Safari):</strong>
+          <ol>
+            <li>खालील <strong>Share</strong> बटण ( <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> ) वर टॅप करा.</li>
+            <li>खाली स्क्रोल करून <strong>"Add to Home Screen"</strong> ( ➕ ) निवडा.</li>
+            <li>उजवीकडे वर <strong>Add</strong> दाबा.</li>
+          </ol>
+        </div>
+      </div>
+
+      <button type="button" id="dismiss-install-modal" class="btn-submit" style="margin-top: 14px;">समजले (Got It!)</button>
+    </div>
   </div>
 
   <!-- Scripts -->

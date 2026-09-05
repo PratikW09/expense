@@ -1,6 +1,7 @@
 /**
  * app.js
  * Expense & Split Tracker — Modern Fintech UX
+ * - Analytics & Dashboard with Chart.js (Monthly / Yearly Trends, Category Breakdown, KPIs)
  * - OAuth Authorization Code Flow with Long-Lived Refresh Tokens
  * - Edit & Delete for Personal Expenses & Split Requests
  * - Idempotency & Duplicate Prevention (crypto.randomUUID assigned at creation)
@@ -16,13 +17,108 @@ const App = (() => {
   let selectedFriends = new Set();
   let splitMode = 'equal'; // 'equal' | 'full' | 'custom'
   let customAmounts = {};  // { [personName]: number }
-  let currentTab = 'add';
+  let currentTab = 'add';  // 'add' | 'friends' | 'dashboard'
   let activeFriendFilter = 'all';
   let searchQuery = '';
   let isSaving = false;
   let syncQueuePaused = false;
   let editingExpenseId = null;
   let els = {};
+
+  // Analytics State & Chart Instances
+  const currentYear = new Date().getFullYear().toString();
+  const currentMonthNum = String(new Date().getMonth() + 1).padStart(2, '0');
+  let selectedAnalyticsYear = currentYear;
+  let selectedAnalyticsMonth = 'all'; // 'all' or '01'..'12'
+
+  let chartMonthlyTrend = null;
+  let chartShareDoughnut = null;
+  let chartDailyMonth = null;
+  let deferredInstallPrompt = null;
+
+  // Language state: 'mr' (Marathi) or 'en' (English)
+  let currentLang = localStorage.getItem('app_language') || 'mr';
+
+  const I18N = {
+    mr: {
+      signinTitle: 'खर्च आणि मित्रांचा हिशोब',
+      signinDesc: 'दैनंदिन खर्च नोंदवा आणि मित्रांमधील हिशोब (पैसे आले / पैसे गेले) सहज ठेवा. सर्व डेटा गुगल शीटमध्ये सुरक्षित राहतो.',
+      signinBtn: 'गुगलने सुरू करा (Continue with Google)',
+      greeting: 'नमस्कार',
+      sheetConnected: 'शीट जोडली आहे',
+      installBtn: 'अ‍ॅप शॉर्टकट',
+      sheetBtn: 'शीट',
+      tabAdd: 'पैसे गेले (खर्च)',
+      tabFriends: 'पैसे येणे बाकी',
+      tabDashboard: 'हिशोब',
+      splitTitle: 'मित्रांसोबत वाटा (Split with Friends)',
+      modeEqual: 'समान वाटा (Equal)',
+      modeFull: 'मी भरले १००% (Paid Them)',
+      modeCustom: 'कस्टम रक्कम (Custom)',
+      saveBtn: 'खर्च जतन करा (Save)',
+      updateBtn: 'बदल जतन करा (Update)',
+      recentExpenses: 'अलीकडील खर्च (Recent Expenses)',
+      totalOwedTitle: 'एकूण पैसे येणे बाकी (To Receive)',
+      totalOwedSubtitle: 'मित्रांकडून येणे असलेले एकूण पैसे',
+      searchPlaceholder: 'नावानुसार शोधा (Search name)...',
+      emptyFriends: 'सर्व हिशोब चुकता झाला आहे! कोणाकडूनही पैसे येणे बाकी नाही. 🎉',
+      markPaid: 'पैसे आले (जमा)',
+      settleAll: 'पूर्ण हिशोब चुकता',
+      unpaidCount: 'बाकी खर्च',
+      analyticsTitle: 'हिशोब व विश्लेषण (Analytics)',
+      thisMonthLabel: 'हा महिना (This Month)',
+      thisYearLabel: 'निवडलेले वर्ष (Year)',
+      myShareLabel: 'माझा स्वतःचा खर्च (My Share)',
+      dailyAvgLabel: 'दररोजचा सरासरी खर्च (Daily Avg)',
+      chartMonthlyTitle: 'महिन्यानुसार खर्चाचा आलेख (Monthly Trend)',
+      chartDistTitle: 'खर्चाची विभागणी (Distribution)',
+      chartCatTitle: 'सर्वाधिक खर्च कशावर झाला?',
+      chartDailyTitle: 'दररोजचा खर्च (Daily Breakdown)',
+      editingExpense: 'खर्च बदलत आहात (Editing Expense)',
+      totalBilled: 'एकूण खर्च',
+      personalSpend: 'स्वतःचा खर्च',
+      friendsOwe: 'मित्रांचा वाटा',
+    },
+    en: {
+      signinTitle: 'Expense & Split Tracker',
+      signinDesc: 'Track daily personal expenses and split bills with friends. All data syncs directly and securely with your Google Sheet.',
+      signinBtn: 'Continue with Google',
+      greeting: 'Hi',
+      sheetConnected: 'Sheet connected',
+      installBtn: 'App Shortcut',
+      sheetBtn: 'Sheet',
+      tabAdd: 'Money Spent (Add)',
+      tabFriends: 'Money to Receive (Owes)',
+      tabDashboard: 'Analytics',
+      splitTitle: 'Split with Friends',
+      modeEqual: 'Equal Split',
+      modeFull: 'Paid for Them (100%)',
+      modeCustom: 'Custom Amounts',
+      saveBtn: 'Save Expense',
+      updateBtn: 'Update Expense',
+      recentExpenses: 'Recent Expenses',
+      totalOwedTitle: 'Total Money to Receive (You Are Owed)',
+      totalOwedSubtitle: 'Total pending dues from friends',
+      searchPlaceholder: 'Filter by friend name...',
+      emptyFriends: 'All settled up! No pending dues. 🎉',
+      markPaid: 'Mark Received (Paid)',
+      settleAll: 'Settle All',
+      unpaidCount: 'unpaid expense',
+      analyticsTitle: 'Spending Analytics',
+      thisMonthLabel: 'This Month',
+      thisYearLabel: 'Selected Year',
+      myShareLabel: 'My Net Share',
+      dailyAvgLabel: 'Daily Average',
+      chartMonthlyTitle: 'Monthly Expense Trend',
+      chartDistTitle: 'Spend Distribution',
+      chartCatTitle: 'Top Expense Breakdown',
+      chartDailyTitle: 'Daily Spending Breakdown',
+      editingExpense: 'Editing Expense',
+      totalBilled: 'Total Billed',
+      personalSpend: 'Personal Spend',
+      friendsOwe: 'Friends Owe',
+    }
+  };
 
   /**
    * Generate permanent UUID at creation time
@@ -43,6 +139,19 @@ const App = (() => {
     renderExpenses();
     renderFriendsBalances();
     setDefaultDate();
+    initAnalyticsFilters();
+    applyLanguage(currentLang);
+
+    // Register Service Worker for PWA Installation
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch((err) => console.log('SW Registration:', err));
+    }
+
+    // Capture PWA beforeinstallprompt event
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+    });
 
     // Register Scope Upgrade and Token Revocation listeners
     GoogleSheets.onScopeUpgradeRequired(handleScopeUpgradeRequired);
@@ -60,6 +169,32 @@ const App = (() => {
       // Screens
       signinScreen: document.getElementById('signin-screen'),
       appScreen: document.getElementById('app-screen'),
+
+      // Language Switcher
+      languageSelect: document.getElementById('language-select'),
+      lblGreeting: document.getElementById('lbl-greeting'),
+      lblSheetConnected: document.getElementById('lbl-sheet-connected'),
+      lblInstallBtn: document.getElementById('lbl-install-btn'),
+      lblSheetBtn: document.getElementById('lbl-sheet-btn'),
+      tabLblAdd: document.getElementById('tab-lbl-add'),
+      tabLblFriends: document.getElementById('tab-lbl-friends'),
+      tabLblDashboard: document.getElementById('tab-lbl-dashboard'),
+      lblSplitTitle: document.getElementById('lbl-split-title'),
+      lblModeEqual: document.getElementById('lbl-mode-equal'),
+      lblModeFull: document.getElementById('lbl-mode-full'),
+      lblModeCustom: document.getElementById('lbl-mode-custom'),
+      lblSubmitBtn: document.getElementById('lbl-submit-btn'),
+      lblRecentExpenses: document.getElementById('lbl-recent-expenses'),
+      lblTotalOwedTitle: document.getElementById('lbl-total-owed-title'),
+      lblTotalOwedDesc: document.getElementById('lbl-total-owed-desc'),
+      lblEmptyFriends: document.getElementById('lbl-empty-friends'),
+      lblAnalyticsTitle: document.getElementById('lbl-analytics-title'),
+      lblKpiMyShare: document.getElementById('lbl-kpi-my-share'),
+      lblKpiDailyAvg: document.getElementById('lbl-kpi-daily-avg'),
+      lblChartMonthlyTitle: document.getElementById('lbl-chart-monthly-title'),
+      lblChartDistTitle: document.getElementById('lbl-chart-dist-title'),
+      lblChartCatTitle: document.getElementById('lbl-chart-cat-title'),
+      lblEditingExpense: document.getElementById('lbl-editing-expense'),
 
       // Sign in & User
       googleSignInBtn: document.getElementById('google-signin-btn'),
@@ -79,8 +214,10 @@ const App = (() => {
       // Tabs
       tabAdd: document.getElementById('tab-add'),
       tabFriends: document.getElementById('tab-friends'),
+      tabDashboard: document.getElementById('tab-dashboard'),
       viewAdd: document.getElementById('view-add'),
       viewFriends: document.getElementById('view-friends'),
+      viewDashboard: document.getElementById('view-dashboard'),
       pendingBadge: document.getElementById('pending-badge'),
 
       // Expense Form
@@ -111,10 +248,43 @@ const App = (() => {
       friendsFilterChips: document.getElementById('friends-filter-chips'),
       friendsBalancesList: document.getElementById('friends-balances-list'),
       friendsEmpty: document.getElementById('friends-empty'),
+
+      // Dashboard View Elements
+      analyticsYearSelect: document.getElementById('analytics-year-select'),
+      analyticsMonthSelect: document.getElementById('analytics-month-select'),
+      kpiPeriodLabel: document.getElementById('kpi-period-label'),
+      kpiMonthSpend: document.getElementById('kpi-month-spend'),
+      kpiMonthSub: document.getElementById('kpi-month-sub'),
+      kpiYearLabel: document.getElementById('kpi-year-label'),
+      kpiYearSpend: document.getElementById('kpi-year-spend'),
+      kpiYearSub: document.getElementById('kpi-year-sub'),
+      kpiMyShare: document.getElementById('kpi-my-share'),
+      kpiShareSub: document.getElementById('kpi-share-sub'),
+      kpiDailyAvg: document.getElementById('kpi-daily-avg'),
+      kpiDailySub: document.getElementById('kpi-daily-sub'),
+      trendYearBadge: document.getElementById('trend-year-badge'),
+      monthlyTrendCanvas: document.getElementById('monthly-trend-chart'),
+      shareDoughnutCanvas: document.getElementById('share-doughnut-chart'),
+      categoryBreakdownList: document.getElementById('category-breakdown-list'),
+      dailyChartCard: document.getElementById('daily-chart-card'),
+      dailyChartTitle: document.getElementById('daily-chart-title'),
+      dailyMonthCanvas: document.getElementById('daily-month-chart'),
+
+      // PWA Install Elements
+      installAppBtn: document.getElementById('install-app-btn'),
+      installModal: document.getElementById('install-modal'),
+      closeInstallModal: document.getElementById('close-install-modal'),
+      dismissInstallModal: document.getElementById('dismiss-install-modal'),
     };
   }
 
   function bindEvents() {
+    // 0. Install App Shortcut
+    els.installAppBtn?.addEventListener('click', handleInstallClick);
+    els.closeInstallModal?.addEventListener('click', () => { if (els.installModal) els.installModal.style.display = 'none'; });
+    els.dismissInstallModal?.addEventListener('click', () => { if (els.installModal) els.installModal.style.display = 'none'; });
+    els.installModal?.addEventListener('click', (e) => { if (e.target === els.installModal) els.installModal.style.display = 'none'; });
+
     // 1. Sign In (Authorization Code redirect)
     els.googleSignInBtn?.addEventListener('click', () => {
       showStatus('Redirecting to Google Sign-In...', 'info');
@@ -134,9 +304,10 @@ const App = (() => {
       showStatus('Signed out successfully.', 'info');
     });
 
-    // 4. Tab Switching
+    // 4. Tab Switching (3 Tabs)
     els.tabAdd?.addEventListener('click', () => switchTab('add'));
     els.tabFriends?.addEventListener('click', () => switchTab('friends'));
+    els.tabDashboard?.addEventListener('click', () => switchTab('dashboard'));
 
     // 5. Live Split Preview on Amount input
     els.amountInput?.addEventListener('input', updateSplitPreview);
@@ -176,8 +347,82 @@ const App = (() => {
       renderFriendsBalances();
     });
 
-    // 10. Form Submit
+    // 10. Dashboard Filter Dropdowns
+    els.analyticsYearSelect?.addEventListener('change', (e) => {
+      selectedAnalyticsYear = e.target.value;
+      renderDashboardAnalytics();
+    });
+
+    // 11. Language Switcher
+    els.languageSelect?.addEventListener('change', (e) => {
+      applyLanguage(e.target.value);
+    });
+
+    // 12. Form Submit
     els.expenseForm?.addEventListener('submit', handleAddOrUpdateExpense);
+  }
+
+  /**
+   * Apply selected language across all UI elements
+   */
+  function applyLanguage(lang) {
+    currentLang = lang || 'mr';
+    localStorage.setItem('app_language', currentLang);
+    const t = I18N[currentLang] || I18N.mr;
+
+    if (els.languageSelect) els.languageSelect.value = currentLang;
+    if (els.lblGreeting) els.lblGreeting.textContent = t.greeting;
+    if (els.lblSheetConnected) els.lblSheetConnected.textContent = t.sheetConnected;
+    if (els.lblInstallBtn) els.lblInstallBtn.textContent = t.installBtn;
+    if (els.lblSheetBtn) els.lblSheetBtn.textContent = t.sheetBtn;
+    if (els.tabLblAdd) els.tabLblAdd.textContent = t.tabAdd;
+    if (els.tabLblFriends) els.tabLblFriends.textContent = t.tabFriends;
+    if (els.tabLblDashboard) els.tabLblDashboard.textContent = t.tabDashboard;
+    if (els.lblSplitTitle) els.lblSplitTitle.textContent = t.splitTitle;
+    if (els.lblModeEqual) els.lblModeEqual.textContent = t.modeEqual;
+    if (els.lblModeFull) els.lblModeFull.textContent = t.modeFull;
+    if (els.lblModeCustom) els.lblModeCustom.textContent = t.modeCustom;
+    if (els.lblSubmitBtn) els.lblSubmitBtn.textContent = editingExpenseId ? t.updateBtn : t.saveBtn;
+    if (els.lblRecentExpenses) els.lblRecentExpenses.textContent = t.recentExpenses;
+    if (els.lblTotalOwedTitle) els.lblTotalOwedTitle.textContent = t.totalOwedTitle;
+    if (els.lblTotalOwedDesc) els.lblTotalOwedDesc.textContent = t.totalOwedSubtitle;
+    if (els.friendsSearchInput) els.friendsSearchInput.placeholder = t.searchPlaceholder;
+    if (els.lblEmptyFriends) els.lblEmptyFriends.textContent = t.emptyFriends;
+    if (els.lblAnalyticsTitle) els.lblAnalyticsTitle.textContent = t.analyticsTitle;
+    if (els.lblKpiMyShare) els.lblKpiMyShare.textContent = t.myShareLabel;
+    if (els.lblKpiDailyAvg) els.lblKpiDailyAvg.textContent = t.dailyAvgLabel;
+    if (els.lblChartMonthlyTitle) els.lblChartMonthlyTitle.textContent = t.chartMonthlyTitle;
+    if (els.lblChartDistTitle) els.lblChartDistTitle.textContent = t.chartDistTitle;
+    if (els.lblChartCatTitle) els.lblChartCatTitle.textContent = t.chartCatTitle;
+    if (els.lblEditingExpense) els.lblEditingExpense.textContent = t.editingExpense;
+
+    renderFriendsBalances();
+    updateSplitPreview();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
+  }
+
+  /**
+   * PWA Installation & Shortcut Prompt Handler
+   */
+  async function handleInstallClick() {
+    if (deferredInstallPrompt) {
+      try {
+        deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice;
+        if (choice.outcome === 'accepted') {
+          showStatus('App shortcut added! 📱', 'success');
+        }
+      } catch (err) {
+        console.warn('Install prompt error:', err);
+      } finally {
+        deferredInstallPrompt = null;
+      }
+    } else {
+      // Show friendly step-by-step installation instructions modal (e.g. for iOS or Chrome)
+      if (els.installModal) {
+        els.installModal.style.display = 'flex';
+      }
+    }
   }
 
   /**
@@ -187,7 +432,6 @@ const App = (() => {
     const params = new URLSearchParams(window.location.search);
 
     if (params.has('auth')) {
-      // Clean up URL query parameters without reloading
       window.history.replaceState({}, document.title, window.location.pathname);
       showStatus('Google Account connected! Syncing data... ✅', 'success');
     }
@@ -217,7 +461,6 @@ const App = (() => {
         updateAuthUI(true);
         handleScopeUpgradeRequired(err);
       } else {
-        // Offline or transient network issue — stay in cached app mode if we have local cache
         const hasCachedData = expenses.length > 0 || splits.length > 0;
         updateAuthUI(hasCachedData);
         if (!hasCachedData) {
@@ -291,18 +534,23 @@ const App = (() => {
 
   function switchTab(tab) {
     currentTab = tab;
+    [els.tabAdd, els.tabFriends, els.tabDashboard].forEach((b) => b?.classList.remove('active'));
+    [els.viewAdd, els.viewFriends, els.viewDashboard].forEach((v) => {
+      if (v) v.style.display = 'none';
+    });
+
     if (tab === 'add') {
-      els.tabAdd.classList.add('active');
-      els.tabFriends.classList.remove('active');
-      els.viewAdd.style.display = 'block';
-      els.viewFriends.style.display = 'none';
+      els.tabAdd?.classList.add('active');
+      if (els.viewAdd) els.viewAdd.style.display = 'block';
       els.amountInput?.focus();
-    } else {
-      els.tabFriends.classList.add('active');
-      els.tabAdd.classList.remove('active');
-      els.viewAdd.style.display = 'none';
-      els.viewFriends.style.display = 'block';
+    } else if (tab === 'friends') {
+      els.tabFriends?.classList.add('active');
+      if (els.viewFriends) els.viewFriends.style.display = 'block';
       renderFriendsBalances();
+    } else if (tab === 'dashboard') {
+      els.tabDashboard?.classList.add('active');
+      if (els.viewDashboard) els.viewDashboard.style.display = 'block';
+      renderDashboardAnalytics();
     }
   }
 
@@ -544,6 +792,7 @@ const App = (() => {
 
     renderExpenses();
     renderFriendsBalances();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
   }
 
   /* ─── Form Submission: Add or Update Expense ─────────────── */
@@ -684,6 +933,8 @@ const App = (() => {
 
     renderExpenses();
     renderFriendsBalances();
+    initAnalyticsFilters();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
 
     // 2. Reset form
     cancelEdit();
@@ -819,6 +1070,8 @@ const App = (() => {
 
     renderExpenses();
     renderFriendsBalances();
+    initAnalyticsFilters();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
 
     if (editingExpenseId === id) {
       cancelEdit();
@@ -856,6 +1109,7 @@ const App = (() => {
     splits = splits.filter((s) => s.id !== splitId);
     saveSplitsCache();
     renderFriendsBalances();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
 
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
@@ -950,7 +1204,7 @@ const App = (() => {
       return;
     }
 
-    if (els.friendsEmpty) els.friendsEmpty.style.display = 'none';
+    const t = I18N[currentLang] || I18N.mr;
 
     els.friendsBalancesList.innerHTML = filteredPeople
       .map((person) => {
@@ -975,9 +1229,9 @@ const App = (() => {
                   data-person="${escapeHtml(person)}" 
                   data-note="${escapeHtml(it.description)}" 
                   data-amount="${Number(it.shareAmount)}"
-                  title="Mark this item as paid"
+                  title="${t.markPaid}"
                 >
-                  Mark Paid
+                  ${t.markPaid}
                 </button>
                 <button 
                   type="button" 
@@ -1003,12 +1257,12 @@ const App = (() => {
                 <div class="fbc-avatar">${initial}</div>
                 <div class="fbc-name-wrap">
                   <span class="fbc-name">${escapeHtml(person)}</span>
-                  <span class="fbc-count">${itemCount} unpaid expense${itemCount !== 1 ? 's' : ''}</span>
+                  <span class="fbc-count">${itemCount} ${t.unpaidCount}</span>
                 </div>
               </div>
               
               <div class="fbc-right">
-                <span class="fbc-badge">owes ${CONFIG.CURRENCY} ${data.total.toFixed(2)}</span>
+                <span class="fbc-badge">${currentLang === 'mr' ? 'येणे ' : 'owes '}${CONFIG.CURRENCY} ${data.total.toFixed(2)}</span>
                 <span class="chevron-icon">▼</span>
               </div>
             </summary>
@@ -1019,7 +1273,7 @@ const App = (() => {
               </div>
 
               <button type="button" class="btn-settle-all" data-person="${escapeHtml(person)}">
-                Settle All (${CONFIG.CURRENCY} ${data.total.toFixed(2)})
+                ${t.settleAll} (${CONFIG.CURRENCY} ${data.total.toFixed(2)})
               </button>
             </div>
           </details>
@@ -1069,6 +1323,7 @@ const App = (() => {
     });
     saveSplitsCache();
     renderFriendsBalances();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
 
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
@@ -1102,6 +1357,7 @@ const App = (() => {
     });
     saveSplitsCache();
     renderFriendsBalances();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
 
     if (GoogleSheets.isConnected() && !syncQueuePaused) {
       try {
@@ -1168,6 +1424,7 @@ const App = (() => {
 
     renderExpenses();
     renderFriendsBalances();
+    if (currentTab === 'dashboard') renderDashboardAnalytics();
   }
 
   /* ─── Sync From Google Sheets ────────────────────────────── */
@@ -1222,6 +1479,8 @@ const App = (() => {
 
       renderExpenses();
       renderFriendsBalances();
+      initAnalyticsFilters();
+      if (currentTab === 'dashboard') renderDashboardAnalytics();
     } catch (e) {
       if (e.isInsufficientScope) {
         handleScopeUpgradeRequired(e);
@@ -1310,6 +1569,425 @@ const App = (() => {
         const id = btn.dataset.id;
         handleDeleteExpense(id);
       });
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     DASHBOARD & ANALYTICS CHARTS ENGINE (Chart.js)
+  ═══════════════════════════════════════════════════════════ */
+
+  function initAnalyticsFilters() {
+    if (!els.analyticsYearSelect) return;
+
+    // Collect available years from expenses
+    const yearsSet = new Set([currentYear]);
+    expenses.forEach((e) => {
+      const dateStr = e.actualDate || e.createdDate;
+      if (dateStr && dateStr.length >= 4) {
+        const y = dateStr.slice(0, 4);
+        if (!isNaN(parseInt(y))) yearsSet.add(y);
+      }
+    });
+
+    const sortedYears = Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
+    els.analyticsYearSelect.innerHTML = sortedYears
+      .map((y) => `<option value="${y}" ${y === selectedAnalyticsYear ? 'selected' : ''}>${y}</option>`)
+      .join('');
+
+    if (els.trendYearBadge) {
+      els.trendYearBadge.textContent = selectedAnalyticsYear;
+    }
+  }
+
+  function renderDashboardAnalytics() {
+    if (!window.Chart) {
+      console.warn('Chart.js is not loaded.');
+      return;
+    }
+
+    const year = selectedAnalyticsYear;
+    const month = selectedAnalyticsMonth; // 'all' or '01'..'12'
+
+    // Filter expenses for selected year and month
+    const yearExpenses = expenses.filter((e) => {
+      const d = e.actualDate || e.createdDate || '';
+      return d.startsWith(year);
+    });
+
+    const filteredExpenses = yearExpenses.filter((e) => {
+      if (month === 'all') return true;
+      const d = e.actualDate || e.createdDate || '';
+      return d.startsWith(`${year}-${month}`);
+    });
+
+    // 1. Calculate & Render KPI Cards
+    renderKPIs(yearExpenses, filteredExpenses, year, month);
+
+    // 2. Render Monthly Trend Chart
+    renderMonthlyTrendChart(yearExpenses, year);
+
+    // 3. Render Share Doughnut Chart (Personal Share vs Friends' Share)
+    renderShareDoughnutChart(filteredExpenses);
+
+    // 4. Render Top Spending Categories / Keywords
+    renderCategoryBreakdown(filteredExpenses);
+
+    // 5. Render Day-by-Day Chart for specific month (if selected)
+    renderDailyMonthChart(filteredExpenses, year, month);
+  }
+
+  function renderKPIs(yearExpenses, filteredExpenses, year, month) {
+    const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    // Period Total Spend
+    const periodTotal = filteredExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const periodMyShare = filteredExpenses.reduce((sum, e) => sum + (Number(e.myShare !== undefined ? e.myShare : e.amount) || 0), 0);
+    const yearTotal = yearExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    // Update Labels
+    if (els.kpiPeriodLabel) {
+      els.kpiPeriodLabel.textContent = month === 'all' ? `${year} Total Spend` : `${monthNames[parseInt(month)]} ${year}`;
+    }
+    if (els.kpiMonthSpend) {
+      els.kpiMonthSpend.textContent = `${CONFIG.CURRENCY} ${periodTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    if (els.kpiMonthSub) {
+      els.kpiMonthSub.textContent = `${filteredExpenses.length} expense${filteredExpenses.length !== 1 ? 's' : ''}`;
+    }
+
+    if (els.kpiYearLabel) {
+      els.kpiYearLabel.textContent = `${year} Cumulative`;
+    }
+    if (els.kpiYearSpend) {
+      els.kpiYearSpend.textContent = `${CONFIG.CURRENCY} ${yearTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    if (els.kpiMyShare) {
+      els.kpiMyShare.textContent = `${CONFIG.CURRENCY} ${periodMyShare.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    // Daily Average (Burn Rate)
+    let daysCount = 30;
+    if (month !== 'all') {
+      const y = parseInt(year);
+      const m = parseInt(month);
+      daysCount = new Date(y, m, 0).getDate();
+    } else {
+      // Days elapsed in year or 365
+      daysCount = year === currentYear ? Math.max(1, Math.floor((new Date() - new Date(parseInt(year), 0, 1)) / (86400000))) : 365;
+    }
+    const dailyAvg = periodTotal / Math.max(1, daysCount);
+
+    if (els.kpiDailyAvg) {
+      els.kpiDailyAvg.textContent = `${CONFIG.CURRENCY} ${dailyAvg.toFixed(2)}`;
+    }
+    if (els.kpiDailySub) {
+      els.kpiDailySub.textContent = `Avg over ${daysCount} days`;
+    }
+
+    if (els.trendYearBadge) {
+      els.trendYearBadge.textContent = year;
+    }
+  }
+
+  function renderMonthlyTrendChart(yearExpenses, year) {
+    if (!els.monthlyTrendCanvas) return;
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const totalAmounts = new Array(12).fill(0);
+    const myShareAmounts = new Array(12).fill(0);
+
+    yearExpenses.forEach((e) => {
+      const d = e.actualDate || e.createdDate || '';
+      if (d.startsWith(year)) {
+        const parts = d.split('-');
+        if (parts.length >= 2) {
+          const mIndex = parseInt(parts[1], 10) - 1;
+          if (mIndex >= 0 && mIndex < 12) {
+            totalAmounts[mIndex] += Number(e.amount) || 0;
+            myShareAmounts[mIndex] += Number(e.myShare !== undefined ? e.myShare : e.amount) || 0;
+          }
+        }
+      }
+    });
+
+    if (chartMonthlyTrend) {
+      chartMonthlyTrend.destroy();
+    }
+
+    const ctx = els.monthlyTrendCanvas.getContext('2d');
+    chartMonthlyTrend = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: months,
+        datasets: [
+          {
+            label: 'Total Billed',
+            data: totalAmounts,
+            backgroundColor: 'rgba(79, 70, 229, 0.85)',
+            borderRadius: 6,
+            barPercentage: 0.65,
+          },
+          {
+            label: 'My Net Share',
+            data: myShareAmounts,
+            backgroundColor: 'rgba(5, 150, 105, 0.75)',
+            borderRadius: 6,
+            barPercentage: 0.65,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              boxWidth: 12,
+              font: { family: 'Plus Jakarta Sans', weight: '700', size: 11 },
+              color: '#475569',
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (item) => ` ${item.dataset.label}: ${CONFIG.CURRENCY} ${Number(item.raw).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { font: { family: 'Plus Jakarta Sans', weight: '600', size: 11 }, color: '#64748b' },
+          },
+          y: {
+            grid: { color: '#f1f5f9' },
+            ticks: {
+              font: { family: 'Plus Jakarta Sans', size: 10 },
+              color: '#94a3b8',
+              callback: (val) => `${CONFIG.CURRENCY}${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function renderShareDoughnutChart(filteredExpenses) {
+    if (!els.shareDoughnutCanvas) return;
+
+    let totalMyShare = 0;
+    let totalFriendsShare = 0;
+
+    filteredExpenses.forEach((e) => {
+      const my = Number(e.myShare !== undefined ? e.myShare : e.amount) || 0;
+      const fr = Number(e.friendsShare) || Math.max(0, (Number(e.amount) || 0) - my);
+      totalMyShare += my;
+      totalFriendsShare += fr;
+    });
+
+    const hasData = totalMyShare > 0 || totalFriendsShare > 0;
+    const chartData = hasData ? [totalMyShare, totalFriendsShare] : [1, 0];
+    const chartColors = hasData ? ['#4f46e5', '#f43f5e'] : ['#e2e8f0', '#cbd5e1'];
+
+    if (chartShareDoughnut) {
+      chartShareDoughnut.destroy();
+    }
+
+    const ctx = els.shareDoughnutCanvas.getContext('2d');
+    chartShareDoughnut = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: hasData ? ['My Share', "Friends' Share"] : ['No Data', ''],
+        datasets: [
+          {
+            data: chartData,
+            backgroundColor: chartColors,
+            borderWidth: 2,
+            borderColor: '#ffffff',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 10,
+              font: { family: 'Plus Jakarta Sans', weight: '700', size: 11 },
+              color: '#475569',
+            },
+          },
+          tooltip: {
+            enabled: hasData,
+            callbacks: {
+              label: (item) => ` ${item.label}: ${CONFIG.CURRENCY} ${Number(item.raw).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function renderCategoryBreakdown(filteredExpenses) {
+    if (!els.categoryBreakdownList) return;
+
+    if (filteredExpenses.length === 0) {
+      els.categoryBreakdownList.innerHTML = '<div class="empty-state" style="padding: 12px;">No expenses for selected period.</div>';
+      return;
+    }
+
+    const keywordCategories = {
+      'Food & Dining': ['food', 'dinner', 'lunch', 'breakfast', 'tea', 'coffee', 'cafe', 'snack', 'swiggy', 'zomato', 'restaurant', 'pizza', 'burger', 'drink'],
+      'Fuel & Travel': ['petrol', 'diesel', 'fuel', 'cab', 'uber', 'ola', 'auto', 'metro', 'train', 'bus', 'flight', 'toll', 'parking', 'travel'],
+      'Groceries & Mart': ['grocery', 'groceries', 'mart', 'supermarket', 'milk', 'vegetables', 'fruits', 'zepto', 'blinkit', 'instamart'],
+      'Bills & Utilities': ['rent', 'wifi', 'internet', 'electricity', 'bill', 'recharge', 'maintenance', 'water', 'gas'],
+      'Shopping & Leisure': ['shopping', 'amazon', 'flipkart', 'myntra', 'movie', 'cinema', 'game', 'clothes', 'shoes'],
+    };
+
+    const catTotals = {
+      'Food & Dining': 0,
+      'Fuel & Travel': 0,
+      'Groceries & Mart': 0,
+      'Bills & Utilities': 0,
+      'Shopping & Leisure': 0,
+      'General / Other': 0,
+    };
+
+    let grandTotal = 0;
+
+    filteredExpenses.forEach((e) => {
+      const amount = Number(e.amount) || 0;
+      grandTotal += amount;
+      const noteLower = (e.note || '').toLowerCase();
+      let matched = false;
+
+      for (const [category, keywords] of Object.entries(keywordCategories)) {
+        if (keywords.some((k) => noteLower.includes(k))) {
+          catTotals[category] += amount;
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) {
+        catTotals['General / Other'] += amount;
+      }
+    });
+
+    const sortedCategories = Object.entries(catTotals)
+      .filter(([_, amt]) => amt > 0)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (sortedCategories.length === 0) {
+      els.categoryBreakdownList.innerHTML = '<div class="empty-state" style="padding: 12px;">No expenses found.</div>';
+      return;
+    }
+
+    els.categoryBreakdownList.innerHTML = sortedCategories
+      .map(([name, amt]) => {
+        const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
+        return `
+          <div class="cat-item">
+            <div class="cat-top">
+              <span class="cat-name">${escapeHtml(name)} <small style="color:var(--text-muted);">(${pct}%)</small></span>
+              <span class="cat-amount">${CONFIG.CURRENCY} ${amt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div class="cat-bar-bg">
+              <div class="cat-bar-fill" style="width: ${pct}%;"></div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  function renderDailyMonthChart(filteredExpenses, year, month) {
+    if (!els.dailyMonthCanvas || !els.dailyChartCard) return;
+
+    if (month === 'all') {
+      els.dailyChartCard.style.display = 'none';
+      return;
+    }
+
+    els.dailyChartCard.style.display = 'flex';
+    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    if (els.dailyChartTitle) {
+      els.dailyChartTitle.textContent = `Daily Spend in ${monthNames[parseInt(month)]} ${year}`;
+    }
+
+    const y = parseInt(year);
+    const m = parseInt(month);
+    const totalDays = new Date(y, m, 0).getDate();
+    const dayLabels = Array.from({ length: totalDays }, (_, i) => String(i + 1));
+    const dailyAmounts = new Array(totalDays).fill(0);
+
+    filteredExpenses.forEach((e) => {
+      const d = e.actualDate || e.createdDate || '';
+      if (d.startsWith(`${year}-${month}`)) {
+        const parts = d.split('-');
+        if (parts.length >= 3) {
+          const dayNum = parseInt(parts[2], 10);
+          if (dayNum >= 1 && dayNum <= totalDays) {
+            dailyAmounts[dayNum - 1] += Number(e.amount) || 0;
+          }
+        }
+      }
+    });
+
+    if (chartDailyMonth) {
+      chartDailyMonth.destroy();
+    }
+
+    const ctx = els.dailyMonthCanvas.getContext('2d');
+    chartDailyMonth = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: dayLabels,
+        datasets: [
+          {
+            label: 'Daily Spend',
+            data: dailyAmounts,
+            borderColor: '#4f46e5',
+            backgroundColor: 'rgba(79, 70, 229, 0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 3,
+            pointBackgroundColor: '#4f46e5',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => `Day ${items[0].label} ${monthNames[m]}`,
+              label: (item) => ` Spend: ${CONFIG.CURRENCY} ${Number(item.raw).toFixed(2)}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { font: { family: 'Plus Jakarta Sans', size: 10 }, color: '#94a3b8' },
+          },
+          y: {
+            grid: { color: '#f1f5f9' },
+            ticks: {
+              font: { family: 'Plus Jakarta Sans', size: 10 },
+              color: '#94a3b8',
+              callback: (val) => `${CONFIG.CURRENCY}${val}`,
+            },
+          },
+        },
+      },
     });
   }
 

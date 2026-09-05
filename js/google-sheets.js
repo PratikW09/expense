@@ -289,13 +289,16 @@ const GoogleSheets = (() => {
   }
 
   /**
-   * Find or create spreadsheet in user's Google Drive
+   * Find or create spreadsheet in user's Google Drive (Cached for instant startup)
    */
-  async function getOrCreateSpreadsheet() {
+  async function getOrCreateSpreadsheet(forceVerify = false) {
+    if (spreadsheetId && !forceVerify) {
+      return { spreadsheetId, url: getSpreadsheetUrl() };
+    }
+
     if (spreadsheetId) {
       try {
         const sheet = await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId,properties.title`);
-        await ensureTabsExist(spreadsheetId);
         return { spreadsheetId: sheet.spreadsheetId, url: getSpreadsheetUrl() };
       } catch (e) {
         if (e.isInsufficientScope || e.isTokenRevoked) throw e;
